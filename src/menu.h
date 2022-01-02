@@ -103,3 +103,22 @@ public:
     void cancel() override { edit_index_ = index_; }
     int index() const { return index_; }
 };
+
+/// メソッド実行
+struct MenuFunc : public Menu
+{
+    void (*func_)() = nullptr;
+
+public:
+    MenuFunc(const char *c, void (*f)()) : Menu(c), func_(f) {}
+    std::string valueString() const override { return {"execute"}; }
+    int up() override { return 0; }
+    int down() override { return 0; }
+    Menu *decide() override
+    {
+        if (func_)
+            func_();
+        return nullptr;
+    }
+    void cancel() override {}
+};

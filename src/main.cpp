@@ -7,23 +7,42 @@
 #include <vector>
 #include <functional>
 #include <string>
+extern "C"
+{
 #include <hardware/flash.h>
-
+}
 #include "btn.h"
 #include "layer.h"
 #include "menu.h"
 
+int Button::REPEAT_START = 500;
+int Button::REPEAT_CONTINUE = 200;
+
 namespace
 {
-  int Power = 11;
-  int PIN = 12;
-#define NUMPIXELS 1
+  // ピン配置
+  constexpr uint8_t Power = 11;
+  constexpr int16_t LED_PIN = 12;
+  constexpr uint16_t NUMPIXELS = 1;
+  constexpr uint8_t SDA = 6;
+  constexpr uint8_t SCL = 7;
 
-  int SDA = 6;
-  int SCL = 7;
+  /// カスタマイズ項目
+  struct Settings
+  {
+    static constexpr uint32_t MAGIC = 0x464C5354; //"FLST"
+    uint32_t magic;
+    uint8_t layer_index;
+    uint8_t os_index;
+    uint16_t repeat_start;
+    uint16_t repeat_continue;
+  };
+  // FLASH配置
+  constexpr size_t FLASH_TARGET_OFFSET = 512 * 1024; // FLASH上の設定保存アドレス
+  const Settings *settings = (const Settings *)(XIP_BASE + FLASH_TARGET_OFFSET);
 
-  Adafruit_NeoPixel pixels(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
-  U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R2, /* reset=*/U8X8_PIN_NONE, /* clock=*/SCL, /* data=*/SDA);
+  Adafruit_NeoPixel pixels(NUMPIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
+  U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R2, /* reset=*/U8X8_PIN_NONE, SCL, SDA);
   USBKeyboard keyboard(true, 0x16c0, 0x27db, 0x0001);
 
   Button btnA(A0);
@@ -32,44 +51,44 @@ namespace
   Button modKey(A3);
 
   LayerList macLayers{{
+      {{arduino::RIGHT_ARROW, arduino::KEY_CTRL},
+       {arduino::LEFT_ARROW, arduino::KEY_CTRL},
+       {'\t', arduino::KEY_ALT},
+       0,
+       4,
+       0,
+       "M:Win Change",
+       "Btn C: Win Sw"},
       {{'\t', arduino::KEY_CTRL},
        {'\t', arduino::KEY_CTRL | arduino::KEY_SHIFT},
        {'\n', 0},
-       5,
+       4,
        0,
        0,
        "M:Tab Change",
        "Btn C: Enter"},
-      {{arduino::RIGHT_ARROW, arduino::KEY_CTRL},
-       {arduino::LEFT_ARROW, arduino::KEY_CTRL},
-       {' ', arduino::KEY_LOGO},
-       0,
-       5,
-       0,
-       "M:Win Change",
-       "Btn C: Spotlight"},
-      {{'\t', arduino::KEY_LOGO},
-       {'\t', arduino::KEY_LOGO | arduino::KEY_SHIFT},
-       {'\t', arduino::KEY_ALT},
+      {{arduino::RIGHT_ARROW, arduino::KEY_LOGO},
+       {arduino::LEFT_ARROW, arduino::KEY_LOGO},
+       {'r', arduino::KEY_LOGO},
        0,
        0,
-       5,
-       "M:App Change",
-       "Btn C: Next Win"},
+       4,
+       "M:History",
+       "Btn C: Reload"},
       {{'5', arduino::KEY_LOGO | arduino::KEY_SHIFT},
        {'\n', 0},
        {0x1b, 0}, // escape
-       5,
-       5,
+       4,
+       4,
        0,
        "M:Screen Shot",
        "A:Shot B:OK C:NG"},
       {{arduino::KEY_PAGE_UP, 0},
        {arduino::KEY_PAGE_DOWN, 0},
        {' ', 0},
-       5,
+       4,
        0,
-       5,
+       4,
        "M:Page Scroll",
        "Btn C: Space"},
   }};
@@ -78,16 +97,16 @@ namespace
        {'\t', arduino::KEY_CTRL | arduino::KEY_SHIFT},
        {'\n', 0},
        0,
-       5,
-       5,
+       4,
+       4,
        "W:Tab Change",
        "Btn C: Enter"},
       {{'\t', arduino::KEY_ALT},
        {'\t', arduino::KEY_ALT | arduino::KEY_SHIFT},
        {'\n', 0},
-       5,
-       5,
-       5,
+       4,
+       4,
+       4,
        "W:App Change",
        "Btn C: App List"},
   }};
@@ -98,19 +117,229 @@ namespace
   uint8_t layer_index = 0;
   int os_index = 0;
 
+  void save();
+  void load();
+
   MenuList os_sel{"OS Select", {"MacOS", "Windows"}};
   MenuInt rep_st{"Start", 500, 100, 2000, 100, "ms"};
   MenuInt rep_cn{"Continue", 200, 50, 1000, 10, "ms"};
   MenuChild rep_set{"Repeat", {&rep_st, &rep_cn}};
-  MenuChild topMenu{"Menu", {&os_sel, &rep_set}};
+  MenuFunc save_menu{"Save", save};
+  MenuFunc load_menu{"Load", load};
+  MenuChild topMenu{"Menu", {&os_sel, &rep_set, &save_menu, &load_menu}};
 
   Menu *current_menu = &topMenu;
   std::vector<Menu *> menu_stack;
   bool mod_long_press = false;
-}
 
-int Button::REPEAT_START = 500;
-int Button::REPEAT_CONTINUE = 200;
+  ///
+  /// カスタマイズ項目読み込み
+  ///
+  void load()
+  {
+    if (settings->magic == Settings::MAGIC)
+    {
+      os_index = settings->os_index;
+      layer_index = settings->layer_index;
+      Button::REPEAT_START = settings->repeat_start;
+      Button::REPEAT_CONTINUE = settings->repeat_continue;
+      u8g2.clearBuffer();
+      u8g2.drawStr(0, 12, "Load");
+      u8g2.drawStr(20, 28, "OK");
+      u8g2.sendBuffer();
+    }
+    else
+    {
+      u8g2.clearBuffer();
+      u8g2.drawStr(0, 12, "Load");
+      u8g2.drawStr(20, 28, "Failed");
+      u8g2.sendBuffer();
+    }
+    delay(1000);
+  }
+
+  ///
+  /// カスタマイズ項目保存
+  ///
+  void save()
+  {
+    u8g2.clearBuffer();
+#if 1
+    u8g2.drawStr(0, 12, "Save");
+    u8g2.drawStr(20, 28, "->Erase");
+    u8g2.sendBuffer();
+    delay(500);
+
+    uint8_t buffer[FLASH_PAGE_SIZE];
+    auto *s = reinterpret_cast<Settings *>(buffer);
+    *s = *settings;
+    s->magic = Settings::MAGIC;
+    s->os_index = os_index;
+    s->layer_index = layer_index;
+    s->repeat_start = Button::REPEAT_START;
+    s->repeat_continue = Button::REPEAT_CONTINUE;
+
+    constexpr size_t m = FLASH_PAGE_SIZE - 1;
+    constexpr size_t sz = sizeof(Settings) + m;
+    constexpr size_t wsz = sz - (sz % FLASH_PAGE_SIZE);
+    flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE);
+
+    u8g2.clearBuffer();
+    u8g2.drawStr(0, 12, "Save");
+    u8g2.drawStr(20, 28, "->Program");
+    u8g2.sendBuffer();
+    delay(500);
+
+    flash_range_program(FLASH_TARGET_OFFSET, buffer, wsz);
+
+    u8g2.clearBuffer();
+    u8g2.drawStr(0, 12, "Save");
+    u8g2.drawStr(20, 28, " Complete");
+    u8g2.sendBuffer();
+    delay(1000);
+#else
+    u8g2.drawStr(0, 12, "Save");
+    u8g2.drawStr(20, 28, "not support yet");
+    u8g2.sendBuffer();
+    delay(1000);
+#endif
+  }
+
+  ///
+  /// メニュー決定処理
+  ///
+  void decide()
+  {
+    // os
+    int os = os_sel.index();
+    if (os != os_index)
+    {
+      os_index = os;
+      layer_index = 0;
+    }
+
+    // repeat
+    int rs = rep_st.value();
+    if (rs != Button::REPEAT_START)
+      Button::REPEAT_START = rs;
+    int rc = rep_cn.value();
+    if (rc != Button::REPEAT_CONTINUE)
+      Button::REPEAT_CONTINUE = rc;
+  }
+
+  ///
+  /// メニュー表示＆操作
+  ///
+  void menu()
+  {
+    u8g2.clearBuffer();
+    u8g2.drawStr(0, 12, current_menu->caption());
+    u8g2.drawStr(0, 28, current_menu->valueString().c_str());
+    u8g2.sendBuffer();
+
+    auto cancel = [&]
+    {
+      current_menu->cancel();
+      current_menu = menu_stack.back();
+      menu_stack.pop_back();
+    };
+
+    if (btnA.repeat())
+      current_menu->up();
+    else if (btnB.repeat())
+      current_menu->down();
+    else if (btnC.repeat())
+    {
+      auto *new_menu = current_menu->decide();
+      if (new_menu)
+      {
+        decide();
+        menu_stack.push_back(current_menu);
+        current_menu = new_menu;
+      }
+      else
+        cancel();
+    }
+
+    if (modKey.pressed() && modKey.long_pressed(1000))
+    {
+      if (!mod_long_press)
+      {
+        mod_long_press = true;
+        on_menu = false;
+        u8g2.clearBuffer();
+        u8g2.sendBuffer();
+        return;
+      }
+    }
+    else if (modKey.release())
+    {
+      if (!mod_long_press && !menu_stack.empty())
+        cancel();
+      mod_long_press = false;
+    }
+
+    pixels.clear();
+    delay(5);
+    pixels.show();
+    delay(5);
+  }
+
+  ///
+  /// キースキャン＆送信
+  ///
+  void keymode()
+  {
+    static int capcnt = 0;
+
+    auto &layers = *layerList[os_index];
+
+    if (modKey.pressed() && modKey.long_pressed(1000))
+    {
+      if (!mod_long_press)
+      {
+        on_menu = true;
+        mod_long_press = true;
+        return;
+      }
+    }
+    else if (modKey.release())
+    {
+      if (!mod_long_press)
+      {
+        layer_index = (layer_index + 1) % layers.size();
+        capcnt = 0;
+      }
+      mod_long_press = false;
+    }
+
+    auto &layer = layers[layer_index];
+    if (btnA.repeat())
+      keyboard.key_code(layer.A_.code, layer.A_.mod);
+    if (btnB.repeat())
+      keyboard.key_code(layer.B_.code, layer.B_.mod);
+    if (btnC.repeat())
+      keyboard.key_code(layer.C_.code, layer.C_.mod);
+
+    u8g2.clearBuffer();
+    if (capcnt < 180)
+    {
+      if (layer.caption0_)
+        u8g2.drawStr(0, 12, layer.caption0_);
+      if (layer.caption1_)
+        u8g2.drawStr(0, 28, layer.caption1_);
+      u8g2.drawHLine(0, 31, capcnt / 2);
+      capcnt++;
+    }
+    u8g2.sendBuffer();
+
+    pixels.clear();
+    pixels.setPixelColor(0, pixels.Color(layer.r_, layer.g_, layer.b_));
+    delay(5);
+    pixels.show();
+    delay(5);
+  }
+}
 
 void setup()
 {
@@ -125,132 +354,8 @@ void setup()
   btnB.init();
   btnC.init();
   modKey.init();
-}
 
-void decide()
-{
-  // os
-  int os = os_sel.index();
-  if (os != os_index)
-  {
-    os_index = os;
-    layer_index = 0;
-  }
-
-  // repeat
-  int rs = rep_st.value();
-  if (rs != Button::REPEAT_START)
-    Button::REPEAT_START = rs;
-  int rc = rep_cn.value();
-  if (rc != Button::REPEAT_CONTINUE)
-    Button::REPEAT_CONTINUE = rc;
-}
-
-void menu()
-{
-  u8g2.clearBuffer();
-  u8g2.drawStr(0, 12, current_menu->caption());
-  u8g2.drawStr(0, 28, current_menu->valueString().c_str());
-  u8g2.sendBuffer();
-
-  auto cancel = [&]
-  {
-    current_menu->cancel();
-    current_menu = menu_stack.back();
-    menu_stack.pop_back();
-  };
-
-  if (btnA.repeat())
-    current_menu->up();
-  else if (btnB.repeat())
-    current_menu->down();
-  else if (btnC.repeat())
-  {
-    auto *new_menu = current_menu->decide();
-    if (new_menu)
-    {
-      decide();
-      menu_stack.push_back(current_menu);
-      current_menu = new_menu;
-    }
-    else
-      cancel();
-  }
-
-  if (modKey.pressed() && modKey.long_pressed(1000))
-  {
-    if (!mod_long_press)
-    {
-      mod_long_press = true;
-      on_menu = false;
-      u8g2.clearBuffer();
-      u8g2.sendBuffer();
-      return;
-    }
-  }
-  else if (modKey.release())
-  {
-    if (!mod_long_press && !menu_stack.empty())
-      cancel();
-    mod_long_press = false;
-  }
-
-  pixels.clear();
-  delay(5);
-  pixels.show();
-  delay(5);
-}
-
-void keymode()
-{
-  static int capcnt = 0;
-
-  auto &layers = *layerList[os_index];
-
-  if (modKey.pressed() && modKey.long_pressed(1000))
-  {
-    if (!mod_long_press)
-    {
-      on_menu = true;
-      mod_long_press = true;
-      return;
-    }
-  }
-  else if (modKey.release())
-  {
-    if (!mod_long_press)
-    {
-      layer_index = (layer_index + 1) % layers.size();
-      capcnt = 0;
-    }
-    mod_long_press = false;
-  }
-
-  auto &layer = layers[layer_index];
-  if (btnA.repeat())
-    keyboard.key_code(layer.A_.code, layer.A_.mod);
-  if (btnB.repeat())
-    keyboard.key_code(layer.B_.code, layer.B_.mod);
-  if (btnC.repeat())
-    keyboard.key_code(layer.C_.code, layer.C_.mod);
-
-  u8g2.clearBuffer();
-  if (capcnt < 180)
-  {
-    if (layer.caption0_)
-      u8g2.drawStr(0, 12, layer.caption0_);
-    if (layer.caption1_)
-      u8g2.drawStr(0, 28, layer.caption1_);
-    u8g2.drawHLine(0, 31, capcnt / 2);
-    capcnt++;
-  }
-  u8g2.sendBuffer();
-
-  pixels.clear();
-  pixels.setPixelColor(0, pixels.Color(layer.r_, layer.g_, layer.b_));
-  delay(5);
-  pixels.show();
-  delay(5);
+  load();
 }
 
 void loop()
