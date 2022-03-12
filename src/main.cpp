@@ -55,14 +55,14 @@ namespace
        {arduino::LEFT_ARROW, arduino::KEY_CTRL},
        {'\t', arduino::KEY_ALT},
        0,
-       4,
+       32,
        0,
        "M:Win Change",
        "Btn C: Win Sw"},
       {{'\t', arduino::KEY_CTRL},
        {'\t', arduino::KEY_CTRL | arduino::KEY_SHIFT},
        {'\n', 0},
-       4,
+       32,
        0,
        0,
        "M:Tab Change",
@@ -72,23 +72,23 @@ namespace
        {'r', arduino::KEY_LOGO},
        0,
        0,
-       4,
+       32,
        "M:History",
        "Btn C: Reload"},
       {{'5', arduino::KEY_LOGO | arduino::KEY_SHIFT},
        {'\n', 0},
        {0x1b, 0}, // escape
-       4,
-       4,
+       32,
+       32,
        0,
        "M:Screen Shot",
        "A:Shot B:OK C:NG"},
       {{arduino::KEY_PAGE_UP, 0},
        {arduino::KEY_PAGE_DOWN, 0},
        {' ', 0},
-       4,
+       32,
        0,
-       4,
+       32,
        "M:Page Scroll",
        "Btn C: Space"},
   }};
@@ -97,16 +97,16 @@ namespace
        {'\t', arduino::KEY_CTRL | arduino::KEY_SHIFT},
        {'\n', 0},
        0,
-       4,
-       4,
+       32,
+       32,
        "W:Tab Change",
        "Btn C: Enter"},
       {{'\t', arduino::KEY_ALT},
        {'\t', arduino::KEY_ALT | arduino::KEY_SHIFT},
        {'\n', 0},
-       4,
-       4,
-       4,
+       32,
+       32,
+       32,
        "W:App Change",
        "Btn C: App List"},
   }};
@@ -294,22 +294,31 @@ namespace
 
     auto &layers = *layerList[os_index];
 
-    if (modKey.pressed() && modKey.long_pressed(1000))
+    static bool layerBackMode = false;
+
+    if (modKey.pressed())
     {
-      if (!mod_long_press)
+      // MODキー長押し
+      if (layerBackMode == false && modKey.long_pressed(1000))
       {
-        on_menu = true;
-        mod_long_press = true;
-        return;
+        // 単独で押し続けたらそのままメニューへ
+        if (!mod_long_press)
+        {
+          on_menu = true;
+          mod_long_press = true;
+          return;
+        }
       }
     }
     else if (modKey.release())
     {
-      if (!mod_long_press)
+      if (layerBackMode == false && mod_long_press == false)
       {
+        // 短押しはレイヤー切り替え
         layer_index = (layer_index + 1) % layers.size();
         capcnt = 0;
       }
+      layerBackMode = false;
       mod_long_press = false;
     }
 
@@ -319,7 +328,18 @@ namespace
     if (btnB.repeat())
       keyboard.key_code(layer.B_.code, layer.B_.mod);
     if (btnC.repeat())
-      keyboard.key_code(layer.C_.code, layer.C_.mod);
+    {
+      if (modKey.pressed())
+        layerBackMode = true;
+      if (layerBackMode)
+      {
+        // レイヤーを戻す
+        layer_index = (layer_index + layers.size() - 1) % layers.size();
+        capcnt = 0;
+      }
+      else
+        keyboard.key_code(layer.C_.code, layer.C_.mod);
+    }
 
     u8g2.clearBuffer();
     if (capcnt < 180)
