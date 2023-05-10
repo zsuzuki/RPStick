@@ -1,3 +1,6 @@
+//
+// Copyright 2023 Suzuki Yoshinori(wave.suzuki.z@gmail.com)
+//
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
 #include <Wire.h>
@@ -42,7 +45,8 @@ namespace
   const Settings *settings = (const Settings *)(XIP_BASE + FLASH_TARGET_OFFSET);
 
   Adafruit_NeoPixel pixels(NUMPIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
-  U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R2, /* reset=*/U8X8_PIN_NONE, SCL, SDA);
+  U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0, /* reset=*/U8X8_PIN_NONE, SCL, SDA);
+  // U8G2_SSD1306_128X32_WINSTAR_F_HW_I2C u8g2(U8G2_R2, /* reset=*/U8X8_PIN_NONE, SCL, SDA);
   USBKeyboard keyboard(true, 0x16c0, 0x27db, 0x0001);
 
   Button btnA(A0);
@@ -50,60 +54,112 @@ namespace
   Button btnC(A2);
   Button modKey(A3);
 
+  //
+  // この文字列を上書きするには
+  // picotool load str.txt -t bin -o 0x10180000
+  //
+  std::vector<std::string> messages = {
+      "Hello", "World", "./build/"};
+
+  std::string getString(const char *msg)
+  {
+    size_t len = 0;
+    for (auto *ptr = msg; *ptr != '\0' && *ptr != 0xa; ptr++)
+    {
+      len++;
+    }
+    std::string ret;
+    ret.assign(msg, len);
+    return ret;
+  }
+
+  void overrideMessages()
+  {
+    const char *msgAdrs = reinterpret_cast<const char *>(0x10180000);
+    if (*msgAdrs == '\0')
+    {
+      return;
+    }
+
+    auto numStr = getString(msgAdrs);
+
+    auto n = std::stoi(numStr);
+    if (n == 0)
+    {
+      return;
+    }
+    messages.resize(n);
+    msgAdrs += numStr.length() + 1;
+
+    for (int i = 0; i < n; i++)
+    {
+      messages[i] = getString(msgAdrs);
+      msgAdrs += messages[i].length() + 1;
+    }
+  }
+
   LayerList macLayers{{
-      {{arduino::RIGHT_ARROW, arduino::KEY_CTRL},
-       {arduino::LEFT_ARROW, arduino::KEY_CTRL},
-       {'\t', arduino::KEY_ALT},
+      {{arduino::RIGHT_ARROW, arduino::KEY_CTRL, 0},
+       {arduino::LEFT_ARROW, arduino::KEY_CTRL, 0},
+       {'\t', arduino::KEY_ALT, 0},
        0,
        32,
        0,
        "M:Win Change",
        "Btn C: Win Sw"},
-      {{'\t', arduino::KEY_CTRL},
-       {'\t', arduino::KEY_CTRL | arduino::KEY_SHIFT},
-       {'\n', 0},
+      {{'\t', arduino::KEY_CTRL, 0},
+       {'\t', arduino::KEY_CTRL | arduino::KEY_SHIFT, 0},
+       {'\n', 0, 0},
        32,
        0,
        0,
        "M:Tab Change",
        "Btn C: Enter"},
-      {{arduino::RIGHT_ARROW, arduino::KEY_LOGO},
-       {arduino::LEFT_ARROW, arduino::KEY_LOGO},
-       {'r', arduino::KEY_LOGO},
+      {{arduino::RIGHT_ARROW, arduino::KEY_LOGO, 0},
+       {arduino::LEFT_ARROW, arduino::KEY_LOGO, 0},
+       {'r', arduino::KEY_LOGO, 0},
        0,
        0,
        32,
        "M:History",
        "Btn C: Reload"},
-      {{'5', arduino::KEY_LOGO | arduino::KEY_SHIFT},
-       {'\n', 0},
-       {0x1b, 0}, // escape
+      {{'5', arduino::KEY_LOGO | arduino::KEY_SHIFT, 0},
+       {'\n', 0, 0},
+       {0x1b, 0, 0}, // escape
        32,
        32,
        0,
        "M:Screen Shot",
        "A:Shot B:OK C:NG"},
-      {{arduino::KEY_PAGE_UP, 0},
-       {arduino::KEY_PAGE_DOWN, 0},
-       {' ', 0},
+      {{arduino::KEY_PAGE_UP, 0, 0},
+       {arduino::KEY_PAGE_DOWN, 0, 0},
+       {' ', 0, 0},
        32,
        0,
        32,
        "M:Page Scroll",
        "Btn C: Space"},
+      {{'\0', 0, 0},
+       {'\0', 0, 1},
+       {'\0', 0, 2},
+       0,
+       32,
+       32,
+       "M:Page Scroll",
+       "Btn C: Space"},
   }};
   LayerList winLayers{{
-      {{'\t', arduino::KEY_CTRL},
-       {'\t', arduino::KEY_CTRL | arduino::KEY_SHIFT},
-       {'\n', 0},
+      {{'\t', arduino::KEY_CTRL, 0},
+       {'\t', arduino::KEY_CTRL | arduino::KEY_SHIFT, 0},
+       {'\n', 0, 0},
        0,
        32,
        32,
        "W:Tab Change",
        "Btn C: Enter"},
-      {{'\t', arduino::KEY_ALT},
-       {'\t', arduino::KEY_ALT | arduino::KEY_SHIFT},
-       {'\n', 0},
+      {{'\t', arduino::KEY_ALT, 0},
+       {'\t', arduino::KEY_ALT | arduino::KEY_SHIFT, 0},
+       {'\n', 0, 0},
        32,
        32,
        32,
@@ -322,11 +378,23 @@ namespace
       mod_long_press = false;
     }
 
+    auto putKey = [](const Layer::Key &key)
+    {
+      if (key.code != '\0')
+      {
+        keyboard.key_code(key.code, key.mod);
+      }
+      else
+      {
+        keyboard.puts(messages[key.str].c_str());
+      }
+    };
+
     auto &layer = layers[layer_index];
     if (btnA.repeat())
-      keyboard.key_code(layer.A_.code, layer.A_.mod);
+      putKey(layer.A_);
     if (btnB.repeat())
-      keyboard.key_code(layer.B_.code, layer.B_.mod);
+      putKey(layer.B_);
     if (btnC.repeat())
     {
       if (modKey.pressed())
@@ -338,7 +406,7 @@ namespace
         capcnt = 0;
       }
       else
-        keyboard.key_code(layer.C_.code, layer.C_.mod);
+        putKey(layer.C_);
     }
 
     u8g2.clearBuffer();
@@ -374,6 +442,8 @@ void setup()
   btnB.init();
   btnC.init();
   modKey.init();
+
+  overrideMessages();
 
   load();
 }

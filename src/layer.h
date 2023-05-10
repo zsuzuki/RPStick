@@ -7,6 +7,7 @@ struct Layer
     {
         uint8_t code;
         uint8_t mod;
+        uint8_t str;
     };
     Key A_;
     Key B_;
